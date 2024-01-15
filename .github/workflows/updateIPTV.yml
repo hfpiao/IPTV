@@ -1,0 +1,96 @@
+# This is a basic workflow to help you get started with Actions
+
+name: UpdateIPTV
+
+on:
+#  workflow_dispatch
+  schedule:
+  - cron: "0,30 * * * *"
+    
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  Update:
+    runs-on: ubuntu-latest
+    steps:    
+    - name: Set up Go # 设置Go环境
+      uses: actions/setup-go@v1
+      with:
+        go-version: '^1.19' # 指定所需的Go版本
+          
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: GetTime
+      id: date
+      run: |
+        sudo cp /etc/localtime /etc/localtime.bak
+        sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+        echo "::set-output name=date::$(date +'%Y-%m-%d %H:%M:%S CST')"
+
+    - name: Update
+      run: |
+        # 获取直播源
+        wget https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u -O ipv6.m3u
+        wget https://raw.githubusercontent.com/YanG-1989/m3u/main/Adult.m3u -O temp.m3u 
+        
+        # 央视源
+        rm -f CCTV.m3u
+        sed -n -e 's/央视频道/央视/g' -e '/央视/,+1p' ipv6.m3u > CCTV.m3u
+        sed -i '1i #EXTM3U' CCTV.m3u
+        sed -i '/^\s*$/d' CCTV.m3u
+
+        # 卫视源
+        rm -f CNTV.m3u && touch CNTV.m3u
+        sed -n -e 's/卫视频道/卫视/g' -e '/卫视/,+1p' ipv6.m3u > CNTV1.m3u
+        sed -n -e 's/NewTV系列/数字/g' -e '/数字/,+1p' ipv6.m3u > CNTV2.m3u
+        sed -n -e 's/超清频道/数字/g' -e '/数字/,+1p' ipv6.m3u > CNTV3.m3u
+        cat CNTV1.m3u >> CNTV.m3u
+        cat CNTV2.m3u >> CNTV.m3u
+        cat CNTV3.m3u >> CNTV.m3u
+        rm -f CNTV1.m3u CNTV2.m3u CNTV3.m3u
+        sed -i '1i #EXTM3U' CNTV.m3u
+        sed -i '/^\s*$/d' CNTV.m3u
+
+        # 成人源
+        rm -f Adult.m3u && touch Adult.m3u
+        sed -n '/兔子先生/,+1p' temp.m3u > Adult1.m3u
+        sed -n '/麻豆/,+1p' temp.m3u > Adult2.m3u
+        sed -n '/group-title="日本"/,+1p' temp.m3u > Adult3.m3u
+        cat Adult1.m3u >> Adult.m3u
+        cat Adult2.m3u >> Adult.m3u
+        cat Adult3.m3u >> Adult.m3u
+        rm -f Adult1.m3u Adult2.m3u Adult3.m3u
+        sed -i '1i #EXTM3U' Adult.m3u
+        sed -i '/^\s*$/d' Adult.m3u
+
+        # 整合源
+        rm -f IPTV.m3u && touch IPTV.m3u
+        cat CCTV.m3u >> IPTV.m3u
+        cat CNTV.m3u >> IPTV.m3u
+        sed -i '/#EXTM3U/d' IPTV.m3u
+        sed -i '1i #EXTM3U' IPTV.m3u
+        sed -i '/^\s*$/d' IPTV.m3u
+
+        # 节目源
+        rm -f hfpiao.xml
+        rm -f EPG.xml && wget https://epg.112114.xyz/pp.xml -O EPG.xml
+        awk -F'tvg-id="' '/tvg-name/ {print $2}' IPTV.m3u | awk -F'"' '/tvg-name=/ {print $2}' IPTV.m3u >> channel_list.log
+        go mod download
+        go run main.go
+        rm -f channel_list.log
+        rm -f ipv6.m3u
+        rm -f temp.m3u
+        echo "Auto Update IPTV in ${{ steps.date.outputs.date }}" > README.md
+
+    - name: Clean
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git checkout --orphan latest_branch
+        git add -A
+        git commit -am "${{ steps.date.outputs.date }}"
+        git branch -D main
+        git branch -m main
+
+    - name: Push
+      run: git push -f origin main
